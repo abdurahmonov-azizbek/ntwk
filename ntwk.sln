@@ -5,7 +5,7 @@ VisualStudioVersion = 17.13.35931.197 d17.13
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ntwk", "ntwk\ntwk.csproj", "{652635F7-9DE6-4DCB-8E20-8DD957D9EFF6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ntwk.client", "..\ntwk.client\ntwk.client.csproj", "{6FB2303D-809F-44F1-B79F-F800707BE6BB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ntwk.client", "ntwk.client\ntwk.client.csproj", "{6FB2303D-809F-44F1-B79F-F800707BE6BB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
