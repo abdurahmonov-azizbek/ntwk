@@ -12,12 +12,15 @@ class Tunnel
     public int PrivatePort { get; set; }
     public string Subdomain { get; set; } = string.Empty;
     public TcpClient TcpClient { get; set; } = new TcpClient();
+    public StreamReader Reader { get; set; } = null!;
+    public StreamWriter Writer { get; set; } = null!;
 }
 
 class Program
 {
     static readonly ConcurrentBag<Tunnel> tunnels = new ConcurrentBag<Tunnel>();
     static readonly Random random = new Random();
+    //static readonly Dictionary<string, TcpListener> listeners = new Dictionary<string, TcpListener>();
 
     static async Task Main(string[] args)
     {
@@ -58,91 +61,69 @@ class Program
 
             if (port == 5050)
             {
-                while (client.Connected)
+                var message = await reader.ReadLineAsync();
+                if (string.IsNullOrEmpty(message))
                 {
-                    try
+                    return;
+                }
+
+                if (message.StartsWith("TUNNEL_REQUEST"))
+                {
+                    var requestedSubdomain = message.Split(':')[1];
+                    if (!IsValidSubdomain(requestedSubdomain))
                     {
-                        var message = await reader.ReadLineAsync();
-                        if (string.IsNullOrEmpty(message))
+                        await writer.WriteLineAsync("Invalid subdomain format!");
+                        Console.WriteLine("Invalid subdomain format! Skipping...");
+                        return;
+                    }
+
+                    if (tunnels.Any(tunnel => tunnel.Subdomain == requestedSubdomain))
+                    {
+                        Console.WriteLine($"Subdomain already in use: {requestedSubdomain}");
+                        await writer.WriteLineAsync("Requested subdomain already in use");
+                        return;
+                    }
+
+                    int privatePort;
+                    do
+                    {
+                        privatePort = random.Next(1000, 65536);
+                        try
                         {
-                            Console.WriteLine($"Empty message received from {client.Client.RemoteEndPoint}.");
+                            var tempListener = new TcpListener(IPAddress.Loopback, privatePort);
+                            tempListener.Start();
+                            tempListener.Stop();
                             break;
                         }
-
-                        Console.WriteLine($"Received message on port {port}: {message}");
-
-                        if (message.StartsWith("TUNNEL_REQUEST"))
+                        catch (SocketException ex)
                         {
-                            var requestedSubdomain = message.Split(':')[1];
-                            if (!IsValidSubdomain(requestedSubdomain))
-                            {
-                                await writer.WriteLineAsync("Invalid subdomain format!");
-                                Console.WriteLine($"Invalid subdomain: {requestedSubdomain}");
-                                return;
-                            }
-
-                            if (tunnels.Any(tunnel => tunnel.Subdomain == requestedSubdomain))
-                            {
-                                await writer.WriteLineAsync("This subdomain already in use!");
-                                Console.WriteLine($"Subdomain already in use: {requestedSubdomain}");
-                                return;
-                            }
-
-                            int privatePort;
-                            do
-                            {
-                                privatePort = random.Next(1000, 65536);
-                                try
-                                {
-                                    var tempListener = new TcpListener(IPAddress.Loopback, privatePort);
-                                    tempListener.Start();
-                                    tempListener.Stop();
-                                    break;
-                                }
-                                catch (SocketException ex)
-                                {
-                                    Console.WriteLine($"Port {privatePort} unavailable: {ex.Message}");
-                                    continue;
-                                }
-                                catch (ArgumentOutOfRangeException ex)
-                                {
-                                    Console.WriteLine($"Invalid port {privatePort}: {ex.Message}");
-                                    continue;
-                                }
-                            } while (true);
-
-                            var tunnel = new Tunnel
-                            {
-                                PrivatePort = privatePort,
-                                Subdomain = requestedSubdomain,
-                                TcpClient = client
-                            };
-                            tunnels.Add(tunnel);
-
-                            await writer.WriteLineAsync($"TUNNEL_CREATED:{privatePort}");
-                            Console.WriteLine($"Sent response: TUNNEL_CREATED:{privatePort}");
-                            Console.WriteLine($"Tunnel created!\nSubdomain: {requestedSubdomain}\nPort: {privatePort}\nClient: {client.Client.RemoteEndPoint}");
-
-                            _ = Task.Run(() => MonitorTunnel(tunnel, reader, writer, stream));
-                            return;
+                            Console.WriteLine($"Port {privatePort} unavailable: {ex.Message}");
+                            continue;
                         }
-                    }
-                    catch (IOException ex)
+                        catch (ArgumentOutOfRangeException ex)
+                        {
+                            Console.WriteLine($"Invalid port {privatePort}: {ex.Message}");
+                            continue;
+                        }
+                    } while (true);
+
+                    var tunnel = new Tunnel
                     {
-                        Console.WriteLine($"IO error in HandleClient from {client.Client.RemoteEndPoint}: {ex.Message}");
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Unexpected error in HandleClient from {client.Client.RemoteEndPoint}: {ex.Message}");
-                        break;
-                    }
+                        Subdomain = requestedSubdomain,
+                        TcpClient = client,
+                        PrivatePort = privatePort,
+                        Reader = reader,
+                        Writer = writer,
+                    };
+                    tunnels.Add(tunnel);
+                    await writer.WriteLineAsync($"TUNNEL_CREATED:{privatePort}");
+                    Console.WriteLine($"Tunnel created {requestedSubdomain} {privatePort}");
                 }
             }
             else if (port == 80 || port == 443)
             {
                 var message = await reader.ReadLineAsync();
-                if (string.IsNullOrEmpty(message) || !IsValidHttpRequestLine(message))
+                if (string.IsNullOrEmpty(message))
                 {
                     Console.WriteLine($"Invalid or empty request line on port {port}: {message}");
                     return;
@@ -194,8 +175,8 @@ class Program
                     return;
                 }
 
-                using var tunnelWriter = new StreamWriter(tunnel.TcpClient.GetStream(), Encoding.UTF8) { AutoFlush = true };
-                await tunnelWriter.WriteLineAsync("CONNECTION_REQUESTED");
+                await tunnel.Writer.WriteLineAsync("CONNECTION_REQUESTED");
+                await tunnel.Writer.FlushAsync();
                 Console.WriteLine($"Sent CONNECTION_REQUESTED to {tunnel.Subdomain}:{tunnel.PrivatePort}");
 
                 _ = ConnectAndBindData(tunnel, stream);
@@ -220,17 +201,30 @@ class Program
 
     static async Task ConnectAndBindData(Tunnel? tunnel, NetworkStream? stream)
     {
+        Console.WriteLine("Starting binding data....");
         if (tunnel == null || stream == null)
         {
             Console.WriteLine("ConnectAndBindData: Tunnel or stream is null.");
             return;
         }
 
-        try
-        {
-            var listener = new TcpListener(IPAddress.Loopback, tunnel.PrivatePort);
+        Console.WriteLine("Listener Initializing....");
+        //var listener = listeners[tunnel.Subdomain];
+        //if (listener == null)
+        //{
+        //    Console.WriteLine("Listener not found, creating new....");
+        //    listener = new TcpListener(IPAddress.Loopback, tunnel.PrivatePort);
+        //    listeners.Add(tunnel.Subdomain, listener);
+        //}
+        var listener = new TcpListener(IPAddress.Loopback, tunnel.PrivatePort);
+
+        //try
+        //{
+            Console.WriteLine($"Trying to start listener for: {tunnel.Subdomain}:{tunnel.PrivatePort}");
             listener.Start();
-            var client = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Console.WriteLine($"Server started listening for {tunnel.Subdomain} on port: {tunnel.PrivatePort}");
+            var client = await listener.AcceptTcpClientAsync();
+            Console.WriteLine($"Client connected to his private port...");
             var clientStream = client.GetStream();
 
             Console.WriteLine($"Data tunnel established for {tunnel.Subdomain} on port {tunnel.PrivatePort}");
@@ -241,66 +235,11 @@ class Program
 
             client.Close();
             listener.Stop();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error in ConnectAndBindData for {tunnel.Subdomain}: {ex.Message}");
-        }
-    }
-
-    static async Task MonitorTunnel(Tunnel tunnel, StreamReader reader, StreamWriter writer, NetworkStream stream)
-    {
-        try
-        {
-            while (tunnel.TcpClient.Connected)
-            {
-                try
-                {
-                    if (tunnel.TcpClient.Client.Poll(1000, SelectMode.SelectRead) && tunnel.TcpClient.Client.Available == 0)
-                    {
-                        Console.WriteLine($"Tunnel for subdomain {tunnel.Subdomain} disconnected (poll detected).");
-                        break;
-                    }
-                    await Task.Delay(1000);
-                }
-                catch (SocketException ex)
-                {
-                    Console.WriteLine($"Socket error in MonitorTunnel for {tunnel.Subdomain}: {ex.Message}");
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Unexpected error in MonitorTunnel for {tunnel.Subdomain}: {ex.Message}");
-                    break;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error monitoring tunnel for subdomain {tunnel.Subdomain}: {ex.Message}");
-        }
-        finally
-        {
-            tunnels.TryTake(out tunnel);
-            reader?.Dispose();
-            writer?.Dispose();
-            stream?.Dispose();
-            tunnel.TcpClient.Close();
-            Console.WriteLine($"Tunnel for subdomain {tunnel.Subdomain} removed and connection closed.");
-        }
-    }
-
-    static bool IsValidHttpRequestLine(string? requestLine)
-    {
-        if (string.IsNullOrEmpty(requestLine))
-            return false;
-
-        var parts = requestLine.Split(' ');
-        if (parts.Length != 3)
-            return false;
-
-        var validMethods = new[] { "GET", "POST", "HEAD", "PUT", "DELETE", "OPTIONS", "PATCH" };
-        return validMethods.Contains(parts[0]) && parts[2].StartsWith("HTTP/");
+        //}
+        //catch (Exception ex)
+        //{
+            //Console.WriteLine($"Error in ConnectAndBindData for {tunnel.Subdomain}: {ex.Message}");
+        //}
     }
 
     static bool IsValidSubdomain(string subdomain)
