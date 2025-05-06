@@ -61,10 +61,10 @@ class Program
                 {
                     try
                     {
-                        var tunnelDataClient = new TcpClient();
-                        await tunnelDataClient.ConnectAsync(serverAddress, privatePort);
-                        System.Console.WriteLine($"Connected to private port: {privatePort}");
-                        var tunnelStream = tunnelDataClient.GetStream();
+                        // var tunnelDataClient = new TcpClient();
+                        // await tunnelDataClient.ConnectAsync(serverAddress, privatePort);
+                        // System.Console.WriteLine($"Connected to private port: {privatePort}");
+                        // var tunnelStream = tunnelDataClient.GetStream();
 
 
                         var localClient = new TcpClient();
@@ -72,13 +72,15 @@ class Program
                         Console.WriteLine("Connected to local app");
                         var localStream = localClient.GetStream();
 
+                        var tunnelStream = client.GetStream();
                         Console.WriteLine($"Data tunnel established: {serverAddress}:{privatePort} <-> {localAppHost}:{localAppPort}");
+
 
                         var t1 = tunnelStream.CopyToAsync(localStream);
                         var t2 = localStream.CopyToAsync(tunnelStream);
                         await Task.WhenAll(t1, t2);
 
-                        tunnelDataClient.Close();
+                        // tunnelDataClient.Close();
                         localClient.Close();
                     }
                     catch (Exception ex)

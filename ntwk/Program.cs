@@ -20,7 +20,7 @@ class Program
 {
     static readonly ConcurrentBag<Tunnel> tunnels = new ConcurrentBag<Tunnel>();
     static readonly Random random = new Random();
-    //static readonly Dictionary<string, TcpListener> listeners = new Dictionary<string, TcpListener>();
+    static readonly Dictionary<string, TcpListener> listeners = new Dictionary<string, TcpListener>();
 
     static async Task Main(string[] args)
     {
@@ -208,38 +208,42 @@ class Program
             return;
         }
 
-        Console.WriteLine("Listener Initializing....");
-        //var listener = listeners[tunnel.Subdomain];
-        //if (listener == null)
-        //{
-        //    Console.WriteLine("Listener not found, creating new....");
-        //    listener = new TcpListener(IPAddress.Loopback, tunnel.PrivatePort);
-        //    listeners.Add(tunnel.Subdomain, listener);
-        //}
-        var listener = new TcpListener(IPAddress.Loopback, tunnel.PrivatePort);
+        // Console.WriteLine("Listener Initializing....");
+        // if (!listeners.TryGetValue(tunnel.Subdomain, out var listener))
+        // {
+        //     listener = new TcpListener(IPAddress.Loopback, tunnel.PrivatePort);
+        //     listeners.Add(tunnel.Subdomain, listener);
+        // }
 
-        //try
-        //{
-            Console.WriteLine($"Trying to start listener for: {tunnel.Subdomain}:{tunnel.PrivatePort}");
-            listener.Start();
-            Console.WriteLine($"Server started listening for {tunnel.Subdomain} on port: {tunnel.PrivatePort}");
-            var client = await listener.AcceptTcpClientAsync();
-            Console.WriteLine($"Client connected to his private port...");
-            var clientStream = client.GetStream();
 
-            Console.WriteLine($"Data tunnel established for {tunnel.Subdomain} on port {tunnel.PrivatePort}");
+        try
+        {
+            // Console.WriteLine($"Trying to start listener for: {tunnel.Subdomain}:{tunnel.PrivatePort}");
+            // listener.Start();
+            // Console.WriteLine($"Server started listening for {tunnel.Subdomain} on port: {tunnel.PrivatePort}");
+            // TcpClient? client = default;
+            // while (client == null)
+            // {
+                // client = await listener.AcceptTcpClientAsync();
+            // }
 
-            var t1 = stream.CopyToAsync(clientStream);
-            var t2 = clientStream.CopyToAsync(stream);
+            // Console.WriteLine($"Client connected to his private port...");
+            // var clientStream = client.GetStream();
+
+            var tunnelStream = tunnel.TcpClient.GetStream();
+            Console.WriteLine($"Data tunnel established for {tunnel.Subdomain} using existing connection");
+
+            var t1 = stream.CopyToAsync(tunnelStream);
+            var t2 = tunnelStream.CopyToAsync(stream);
             await Task.WhenAll(t1, t2);
 
-            client.Close();
-            listener.Stop();
-        //}
-        //catch (Exception ex)
-        //{
-            //Console.WriteLine($"Error in ConnectAndBindData for {tunnel.Subdomain}: {ex.Message}");
-        //}
+            // client.Close();
+            // listener.Stop();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in ConnectAndBindData for {tunnel.Subdomain}: {ex.Message}");
+        }
     }
 
     static bool IsValidSubdomain(string subdomain)
